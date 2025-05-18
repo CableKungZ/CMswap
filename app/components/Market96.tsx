@@ -55,7 +55,30 @@ function generateTokenPairs(gameTokens: Record<string, Token[]>): TokenPair[] {
   return pairs;
 }
 
-export default function ExchangePage() {
+function groupOrdersByPrice(orders: Order[], type: "buy" | "sell") {
+  const grouped: Record<number, number> = {};
+
+  orders
+    .filter((o) => o.type === type)
+    .forEach((o) => {
+      if (!grouped[o.price]) {
+        grouped[o.price] = 0;
+      }
+      grouped[o.price] += o.amount;
+    });
+
+  return Object.entries(grouped)
+    .map(([price, amount]) => [parseFloat(price), amount])
+    .sort((a, b) => (type === "buy" ? b[0] - a[0] : a[0] - b[0]));
+}
+
+
+export default function Market96({
+    setIsLoading, setErrMsg,
+}: {
+    setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
+    setErrMsg: React.Dispatch<React.SetStateAction<WriteContractErrorType | null>>,
+}) {
   const { address } = useAccount()
   const [tradeType, setTradeType] = useState<"buy" | "sell">("buy");
   const [price, setPrice] = useState("");
@@ -69,7 +92,9 @@ export default function ExchangePage() {
   const [kkub,setKKUBbal] = useState(0.00);
   const [tokenBal,setTokenBal] = useState(0.00);
   const [onLoading, setOnLoading] = React.useState(false)
+const [view, setView] = useState<"Orders" | "History">("Orders");
 
+  const baseExpURL = "https://www.kubscan.com/";
 
   React.useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -373,16 +398,17 @@ export default function ExchangePage() {
               </span>
             </div>
 
-            {/* Submit Button */}
-            <button
-              onClick={handleOrder}
-              className={`w-full py-2 rounded-lg font-semibold uppercase ${
-                tradeType === "buy" ? "bg-green-600" : "bg-red-600"
-              }`}
-              onClick={handleOrder}
-            >
-              {tradeType === "buy" ? "BUY" : "SELL"} {select.name}
-            </button>
+    {/* Submit Button */}
+    <button
+      onClick={handleOrder}
+      className={`w-full py-2 rounded-lg font-semibold uppercase transition-colors duration-200 ${
+        tradeType === "buy" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"
+      }`}
+      disabled={!select?.name}
+    >
+      {tradeType === "buy" ? "Buy" : "Sell"} {select?.name || ""}
+    </button>
+
           </div>
         </div>
 
@@ -606,9 +632,7 @@ export default function ExchangePage() {
                 <span>{(order.amount * order.price).toFixed(2)} KKUB</span>
               </div>
             ))}
-          </div>
-        </div>
+          </>)}
       </div>
-    </div>
-  );
-}
+      </div>
+)}
