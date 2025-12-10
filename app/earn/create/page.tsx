@@ -42,7 +42,7 @@ import { intervalToDuration } from "date-fns";
 import DateTimePicker from "@/components/cmswap/DateSelector";
 import { Copy, CopyCheck, Plus, Minus } from "lucide-react";
 
-type ThemeId = 25925;
+type ThemeId = 25925 | 96;
 type Theme = {
   primary: string;
   secondary: string;
@@ -61,6 +61,10 @@ type Pool = {
   volume: string;
   tokenA: string;
   tokenB: string;
+  tokenAName: string;
+  tokenBName: string;
+  tokenALogo: string;
+  tokenBLogo: string;
   fee: number;
   poolAddress: string;
   listed: boolean;
@@ -88,11 +92,29 @@ const themes: Record<ThemeId, Theme> = {
     text: "text-green-300",
     bg: "bg-gradient-to-br from-slate-700 via-black to-emerald-900",
   },
+  96: {
+    primary: "from-green-400 to-emerald-400",
+    secondary: "from-green-600 to-emerald-600",
+    accent: "green-400",
+    glow: "",
+    border: "border-green-400/30",
+    text: "text-green-300",
+    bg: "bg-gradient-to-br from-slate-700 via-black to-emerald-900",
+  },
 };
 
 const chains = {
   kubtestnet: {
     name: "KUB Testnet",
+    color: "rgb(20, 184, 166)",
+    accent: "border-green-500",
+    bg: "bg-teal-900/20",
+    text: "text-green-400",
+    border: "border-green-400/30 ",
+    hover: "hover:border-green-400/40",
+  },
+  bitkub: {
+    name: "Bitkub Chain",
     color: "rgb(20, 184, 166)",
     accent: "border-green-500",
     bg: "bg-teal-900/20",
@@ -117,6 +139,9 @@ const chainConfigs: Record<number, ChainConfig> = {
       V3_FACTORY: chainData[96].V3_FACTORY,
       V3_FACTORYCreatedAt: chainData[96].V3_FACTORYCreatedAt,
       positionManagerContract: chainData[96].positionManagerContract,
+      StakingFactoryV3Contract: chainData[96].StakingFactoryV3Contract,
+      StakingFactoryV3_Addr: chainData[96].StakingFactoryV3,
+      StakingFactoryV3CreatedAt: chainData[96].StakingFactoryV3CreatedAt,
     },
   },
   8899: {
@@ -212,9 +237,21 @@ const CreateEarnProgram = () => {
   const [showTxModal, setShowTxModal] = useState(false);
   const [txStatus, setTxStatus] = useState<'idle' | 'approving' | 'creating' | 'completed' | 'error'>('idle');
   const [txHash, setTxHash] = useState<string>('');
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [poolSearchQuery, setPoolSearchQuery] = useState("");
+  const [poolCurrentPage, setPoolCurrentPage] = useState(1);
+  const poolItemsPerPage = 10;
 
   const { priceList } = usePrice();
   const { chainId, address } = useAccount();
+
+  useEffect(() => {
+    if (chainId === 25925) {
+      setSelectedChain("kubtestnet");
+    } else if (chainId === 96) {
+      setSelectedChain("bitkub");
+    }
+  }, [chainId]);
   const rewardAmountRef = useRef<HTMLInputElement>(null);
   const unlockRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -403,13 +440,59 @@ const CreateEarnProgram = () => {
 
   useEffect(() => {
     const fetchPools = async () => {
+      if (!lib.v3FactoryContract) return;
+      
+      const CACHE_KEY = `earn_create_pools_v2_${chainId}`;
+      let cachedData: { pools: Pool[]; lastBlock: string } = { pools: [], lastBlock: "0" };
+      
       try {
+        const stored = localStorage.getItem(CACHE_KEY);
+        if (stored) {
+          cachedData = JSON.parse(stored);
+          if (cachedData.pools && cachedData.pools.length > 0) {
+            setValidPools(cachedData.pools);
+            setLoadingProgress(10); // Cache loaded
+          }
+        }
+      } catch (e) {
+        console.error("Failed to parse pool cache", e);
+      }
+
+      try {
+        const latestBlock = await publicClient.getBlockNumber();
+        const startBlock =
+          cachedData.lastBlock && BigInt(cachedData.lastBlock) > lib.V3_FACTORYCreatedAt
+            ? BigInt(cachedData.lastBlock) + 1n
+            : lib.V3_FACTORYCreatedAt;
+
+        if (startBlock > latestBlock) {
+             setLoadingProgress(100);
+             return;
+        }
+
+        setLoadingProgress(30); // Started fetching events
+
         const logCreateData = await publicClient.getContractEvents({
           ...lib.v3FactoryContract,
           eventName: "PoolCreated",
-          fromBlock: lib.V3_FACTORYCreatedAt,
+          fromBlock: startBlock,
           toBlock: "latest",
         });
+
+        if (logCreateData.length === 0) {
+           // No new events, just update the block number in cache to avoid fetching range again
+           localStorage.setItem(
+            CACHE_KEY,
+            JSON.stringify({
+              pools: cachedData.pools,
+              lastBlock: latestBlock.toString(),
+            })
+          );
+          setLoadingProgress(100);
+          return;
+        }
+
+        setLoadingProgress(50); // Events fetched
 
         const createData = logCreateData.map((res: any) => ({
           action: "create",
@@ -420,7 +503,48 @@ const CreateEarnProgram = () => {
           tx: res.transactionHash as `0x${string}`,
         }));
 
-        const results: Pool[] = [];
+        const newPools: Pool[] = [];
+        const tokenCache = new Map<string, { name: string; symbol: string }>();
+
+        // Pre-fill token cache with known tokens
+        if (tokens) {
+            tokens.forEach(t => { 
+                tokenCache.set(t.value.toLowerCase(), { name: t.name, symbol: t.name });
+            });
+        }
+
+        // Identify unknown tokens
+        const distinctTokens = new Set<string>();
+        createData.forEach(item => {
+             if (!tokenCache.has(item.token0.toLowerCase())) distinctTokens.add(item.token0);
+             if (!tokenCache.has(item.token1.toLowerCase())) distinctTokens.add(item.token1);
+        });
+
+        // Batch fetch unknown tokens
+        const unknownTokens = Array.from(distinctTokens);
+        if (unknownTokens.length > 0) {
+           setLoadingProgress(60); // Fetching symbols
+           const symbolResults = await readContracts(config, {
+             contracts: unknownTokens.map(addr => ({
+               abi: erc20Abi,
+               address: addr as `0x${string}`,
+               functionName: 'symbol'
+             }))
+           });
+
+           unknownTokens.forEach((addr, idx) => {
+             const res = symbolResults[idx];
+             if (res.status === 'success' && res.result) {
+               const sym = String(res.result);
+               tokenCache.set(addr.toLowerCase(), { name: sym, symbol: sym });
+             } else {
+               tokenCache.set(addr.toLowerCase(), { name: 'UNKNOWN', symbol: 'UNKNOWN' });
+             }
+           });
+        }
+        
+        setLoadingProgress(80); // Processing pools
+
         for (const item of createData) {
           let isListed = true;
           let tokenA = tokens.find(
@@ -432,55 +556,92 @@ const CreateEarnProgram = () => {
 
           if (!tokenA) {
             isListed = false;
-            const [symbolA] = await readContracts(config, {
-              contracts: [
-                { abi: erc20Abi, address: item.token0, functionName: "symbol" },
-              ],
-            });
+            const t0Data = tokenCache.get(item.token0.toLowerCase());
             tokenA = {
-              name: symbolA.result ?? "UNKNOWN",
+              name: t0Data?.name ?? "UNKNOWN",
               value: item.token0 as "0xstring",
-              logo: "/default2.png",
+              logo: "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u",
             };
           }
 
           if (!tokenB) {
             isListed = false;
-            const [symbolB] = await readContracts(config, {
-              contracts: [
-                { abi: erc20Abi, address: item.token1, functionName: "symbol" },
-              ],
-            });
+             const t1Data = tokenCache.get(item.token1.toLowerCase());
             tokenB = {
-              name: symbolB.result ?? "UNKNOWN",
+              name: t1Data?.name ?? "UNKNOWN",
               value: item.token1 as "0xstring",
-              logo: "/default2.png",
+              logo: "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u",
             };
           }
-          // Normalize pair name for grouping; keep all fee tiers
-          const [n0, n1] = [tokenA.name, tokenB.name].sort();
-          results.push({
+          // Priority Order: KKUB > KUSDT > CMM > Others (Alphabetical)
+          const PRIORITY = ['KKUB', 'KUSDT', 'CMM'];
+          const getPrio = (name: string) => {
+             const idx = PRIORITY.indexOf(name);
+             return idx !== -1 ? 100 - idx : 0;
+          }
+
+          let left = tokenA;
+          let right = tokenB;
+
+          const pA = getPrio(tokenA.name);
+          const pB = getPrio(tokenB.name);
+
+          // If right has higher priority, swap
+          if (pB > pA) {
+             left = tokenB;
+             right = tokenA;
+          } else if (pA === pB) {
+             // If priorities equal (e.g. both 0), sort alphabetically
+             if (tokenB.name < tokenA.name) {
+                left = tokenB;
+                right = tokenA;
+             }
+          }
+
+          const [n0, n1] = [left.name, right.name];
+          newPools.push({
             id: `${n0}-${n1}-${item.fee}`,
             name: `${n0}/${n1}`,
             apr: "-",
             tvl: "-",
             volume: "-",
-            tokenA: tokenA.value,
-            tokenB: tokenB.value,
+            tokenA: left.value,
+            tokenB: right.value,
+            tokenAName: left.name,
+            tokenBName: right.name,
+            tokenALogo: left.logo,
+            tokenBLogo: right.logo,
             fee: Number(item.fee),
             poolAddress: item.pool,
             listed: isListed,
           });
         }
+        
+        // Merge and de-duplicate (prefer newer if collision, though unlikely with append-only logs)
+        const combinedPools = [...cachedData.pools, ...newPools];
+        
+        // Unique by pool address to be safe
+        const uniquePools = Array.from(new Map(combinedPools.map(p => [p.poolAddress.toLowerCase(), p])).values());
 
-        setValidPools(results);
+        setValidPools(uniquePools);
+        
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+            pools: uniquePools,
+            lastBlock: latestBlock.toString()
+        }));
+
+        setLoadingProgress(100);
+
       } catch (e) {
+        console.error("Error fetching pools", e);
+        // Do not overwrite cache on error
         setErrMsg(e as WriteContractErrorType);
+        setLoadingProgress(100);
       }
     };
 
     fetchPools();
-  }, [selectedChainConfig]);
+  }, [selectedChainConfig, lib.v3FactoryContract]); // Added lib dependency
 
   useEffect(() => {
     const getAverageBlockTime = async () => {
@@ -1117,7 +1278,7 @@ const CreateEarnProgram = () => {
                       >
                         <div className="flex items-center gap-3">
                           <img
-                            src={token.logo || "/default2.png"}
+                            src={token.logo || "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u"}
                             alt={token.name}
                             className="w-8 h-8 rounded-full"
                           />
@@ -1197,18 +1358,31 @@ const CreateEarnProgram = () => {
                 <div className="space-y-6">
                   <div>
                     <h2 className="text-2xl font-bold text-white mb-2">
-                      Select Eligible Pool
+                       Select Eligible Pool
                     </h2>
-                    <p className="text-gray-400">
-                      Choose a liquidity pool to create farming rewards
-                    </p>
-                  </div>
+                     <p className="text-gray-400">
+                       Choose a liquidity pool to create farming rewards
+                     </p>
+                    {loadingProgress < 100 && (
+                      <div className="mt-2">
+                         <div className="h-1 w-full bg-gray-700 rounded-full overflow-hidden">
+                           <div className={`h-full ${currentTheme.bg.replace('bg-', 'bg-')} transition-all duration-300`} style={{ width: `${loadingProgress}%`, background: 'var(--primary)' }}></div>
+                         </div>
+                         <p className="text-xs text-gray-400 mt-1">Loading pools... {loadingProgress}%</p>
+                      </div>
+                    )}
+                   </div>
                   <div className="relative">
                     <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
                     <input
                       ref={searchRef}
                       type="text"
-                      placeholder="Search pools..."
+                      placeholder="Search pools... (Name, Symbol, Address or Pair e.g. 'KKUB,KUSDT')"
+                      value={poolSearchQuery}
+                      onChange={(e) => {
+                        setPoolSearchQuery(e.target.value);
+                        setPoolCurrentPage(1);
+                      }}
                       className={`w-full pl-10 pr-4 py-3  border ${currentTheme.border} ${currentTheme.hover} rounded-lg text-white placeholder-gray-400 focus:outline-none focus:${currentTheme.border}`}
                     />
                   </div>
@@ -1217,10 +1391,50 @@ const CreateEarnProgram = () => {
                     for (const p of validPools) {
                       if (!uniquePairsMap.has(p.name)) uniquePairsMap.set(p.name, p);
                     }
-                    const uniquePairs = Array.from(uniquePairsMap.values());
+                    let uniquePairs = Array.from(uniquePairsMap.values());
+                    
+                    // Filtering Logic
+                    if (poolSearchQuery.trim()) {
+                        const q = poolSearchQuery.toLowerCase().trim();
+                        if (q.includes(',')) {
+                            // Pair Search
+                            const parts = q.split(',').map(s => s.trim()).filter(s => s);
+                            if (parts.length === 2) {
+                                const [p1, p2] = parts;
+                                uniquePairs = uniquePairs.filter(pool => {
+                                    const nA = pool.tokenAName?.toLowerCase() || "";
+                                    const nB = pool.tokenBName?.toLowerCase() || "";
+                                    const sA = (pool.tokenA || "").toLowerCase();
+                                    const sB = (pool.tokenB || "").toLowerCase();
+                                    
+                                    const match1 = nA.includes(p1) || sA.includes(p1);
+                                    const match2 = nB.includes(p2) || sB.includes(p2);
+                                    const match3 = nA.includes(p2) || sA.includes(p2);
+                                    const match4 = nB.includes(p1) || sB.includes(p1);
+                                    
+                                    return (match1 && match2) || (match3 && match4);
+                                });
+                            }
+                        } else {
+                            // Single Term Search
+                            uniquePairs = uniquePairs.filter(pool => 
+                                (pool.tokenAName?.toLowerCase() || "").includes(q) ||
+                                (pool.tokenBName?.toLowerCase() || "").includes(q) ||
+                                (pool.tokenA?.toLowerCase() || "").includes(q) ||
+                                (pool.tokenB?.toLowerCase() || "").includes(q) ||
+                                pool.name.toLowerCase().includes(q)
+                            );
+                        }
+                    }
+
+                    // Pagination Logic
+                    const totalPages = Math.ceil(uniquePairs.length / poolItemsPerPage);
+                    const startIndex = (poolCurrentPage - 1) * poolItemsPerPage;
+                    const paginatedPairs = uniquePairs.slice(startIndex, startIndex + poolItemsPerPage);
+
                     return (
                       <div className="space-y-3">
-                        {uniquePairs.map((pool) => (
+                        {paginatedPairs.map((pool) => (
                           <div
                             key={pool.name}
                             onClick={() => {
@@ -1236,33 +1450,51 @@ const CreateEarnProgram = () => {
                           >
                             <div className="flex items-center space-x-2">
                               <img
-                                src={
-                                  tokens.find((t) => t.value === pool.tokenA)
-                                    ?.logo || "/default2.png"
-                                }
-                                alt={pool.tokenA}
+                                src={pool.tokenALogo || "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u"}
+                                alt={pool.tokenAName}
                                 className="w-5 h-5 rounded-full"
                               />
                               <span className="text-white">
-                                {tokens.find((t) => t.value === pool.tokenA)
-                                  ?.name || pool.tokenA}
+                                {pool.tokenAName}
                               </span>
                               <span className="mx-1">/</span>
                               <img
-                                src={
-                                  tokens.find((t) => t.value === pool.tokenB)
-                                    ?.logo || "/default2.png"
-                                }
-                                alt={pool.tokenB}
+                                src={pool.tokenBLogo || "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u"}
+                                alt={pool.tokenBName}
                                 className="w-5 h-5 rounded-full"
                               />
                               <span className="text-white">
-                                {tokens.find((t) => t.value === pool.tokenB)
-                                  ?.name || pool.tokenB}
+                                {pool.tokenBName}
                               </span>
                             </div>
                           </div>
                         ))}
+                        
+                        {/* Pagination Controls */}
+                        {totalPages > 1 && (
+                            <div className="flex items-center justify-between mt-4">
+                                <button 
+                                    onClick={() => setPoolCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={poolCurrentPage === 1}
+                                    className="px-3 py-1 text-sm border border-gray-600 rounded disabled:opacity-50 text-gray-300 hover:bg-gray-800"
+                                >
+                                    Previous
+                                </button>
+                                <span className="text-sm text-gray-400">
+                                    Page {poolCurrentPage} of {totalPages}
+                                </span>
+                                <button 
+                                    onClick={() => setPoolCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                    disabled={poolCurrentPage === totalPages}
+                                    className="px-3 py-1 text-sm border border-gray-600 rounded disabled:opacity-50 text-gray-300 hover:bg-gray-800"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        )}
+                        {uniquePairs.length === 0 && (
+                            <div className="text-center text-gray-500 py-4">No pools found matching your search.</div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1392,7 +1624,7 @@ const CreateEarnProgram = () => {
                                   alt=""
                                   src={
                                     tokens.find((t) => t.value === rewardToken)
-                                      ?.logo || "/default2.png"
+                                      ?.logo || "https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u"
                                   }
                                   className="w-5 h-5 rounded-full"
                                 />

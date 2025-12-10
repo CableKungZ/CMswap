@@ -44,6 +44,9 @@ const chainConfigs: Record<number, ChainConfig> = {
       V3_FACTORYCreatedAt: chain96.V3_FACTORYCreatedAt,
       positionManagerContract: chain96.positionManagerContract,
       v3StakerContract: chain96.v3StakerContract,
+      StakingFactoryV3Contract: chain96.StakingFactoryV3Contract,
+      StakingFactoryV3_Addr: chain96.StakingFactoryV3,
+      StakingFactoryV3CreatedAt: chain96.StakingFactoryV3CreatedAt,
     },
   },
   8899: {

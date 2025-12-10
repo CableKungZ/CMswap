@@ -310,7 +310,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           tokenA = {
             name: symbolA.result ?? 'UNKNOWN',
             value: item.token0,
-            logo: '/default.png',
+            logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
           };
         }
 
@@ -326,7 +326,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           tokenB = {
             name: symbolB.result ?? 'UNKNOWN',
             value: item.token1,
-            logo: '/default.png',
+            logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
           };
         }
 
@@ -631,8 +631,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
 
             items.push({
               name: `Staking ${(tA?.name ?? 'Token0')}-${(tB?.name ?? 'Token1')} earn ${rewardLabel}`,
-              tokenALogo: tA?.logo || '/default2.png',
-              tokenBLogo: tB?.logo || '/default2.png',
+              tokenALogo: tA?.logo || 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
+              tokenBLogo: tB?.logo || 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
               totalStaked: totalStakedGlobal,
               apr: totalApr,
               stakingApr,
@@ -652,8 +652,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           } catch {
             items.push({
               name: `Staking ${poolAddr.slice(0,6)}... earn ...`,
-              tokenALogo: '/default2.png',
-              tokenBLogo: '/default2.png',
+              tokenALogo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
+              tokenBLogo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
               totalStaked: totalStakedGlobal,
               apr: 0,
               stakingApr: 0,
@@ -786,8 +786,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           className={`flex items-center gap-1.5 p-1 rounded-full w-fit border ${theme.border} shadow-inner shadow-${theme.accent}/10 backdrop-blur-md bg-[#061f1c]`}
         >
           {[
-            { label: 'ALL Reward', value: 'allRP', show: selectedChainId === 1 || selectedChainId === 25925 },
-            { label: 'My Reward', value: 'myRP', show: selectedChainId === 1 || selectedChainId === 25925 },
+            { label: 'ALL Reward', value: 'allRP', show: selectedChainId === 1 || selectedChainId === 25925 || selectedChainId === 96 },
+            { label: 'My Reward', value: 'myRP', show: selectedChainId === 1 || selectedChainId === 25925 || selectedChainId === 96 },
             { label: 'All Liquidity', value: 'allLP', show: true },
             { label: 'Listed', value: 'listedLP', show: true },
             { label: 'Not Listed', value: 'unlistedLP', show: true },
