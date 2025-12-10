@@ -462,7 +462,7 @@ const CreateEarnProgram = () => {
         const latestBlock = await publicClient.getBlockNumber();
         const startBlock =
           cachedData.lastBlock && BigInt(cachedData.lastBlock) > lib.V3_FACTORYCreatedAt
-            ? BigInt(cachedData.lastBlock) + 1n
+            ? BigInt(cachedData.lastBlock) + BigInt(1)
             : lib.V3_FACTORYCreatedAt;
 
         if (startBlock > latestBlock) {
