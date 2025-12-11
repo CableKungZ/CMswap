@@ -475,7 +475,7 @@ const CreateEarnProgram = () => {
         const logCreateData = await publicClient.getContractEvents({
           ...lib.v3FactoryContract,
           eventName: "PoolCreated",
-          fromBlock: startBlock,
+          fromBlock: lib.V3_FACTORYCreatedAt,
           toBlock: "latest",
         });
 

@@ -1,5 +1,5 @@
 'use client'
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
 import { FiGrid, FiList } from 'react-icons/fi';
 import { simulateContract, waitForTransactionReceipt, writeContract, readContract, readContracts, getBalance, sendTransaction, type WriteContractErrorType } from '@wagmi/core';
@@ -15,13 +15,13 @@ import {
   encodeAbiParameters,
   keccak256,
 } from 'viem';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 import StakingV3Modal from './StakingV3Modal';
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { usePrice } from '@/context/getPrice';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 type ThemeId = 96 | 8899 | 56 | 3501 | 10143 | 25925;
 type Theme = {
@@ -125,7 +125,28 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
   type SortField = 'liquidity' | 'volume24h' | 'fee24h' | 'apr' | 'name';
   const [sortBy, setSortBy] = useState<SortField>('liquidity');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [listFilter, setListFilter] = useState<any>('allRP');
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  
+  const tabParam = searchParams.get('tab');
+  const [listFilter, setListFilter] = useState<any>(tabParam || 'allRP');
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && tab !== listFilter) {
+      setListFilter(tab);
+    }
+  }, [searchParams.get('tab'), listFilter]);
+
+  const handleListFilterChange = (filter: string) => {
+    setListFilter(filter);
+    router.push(`${pathname}?tab=${filter}`);
+  };
+
+  const pageParam = searchParams.get('page');
+  const currentPage = pageParam ? Math.max(1, parseInt(pageParam)) : 1;
+  const itemsPerPage = 10;
   const [openStake, setOpenStake] = useState(false);
   const [selectedProgramAddr, setSelectedProgramAddr] = useState<`0x${string}` | null>(null);
   const [selectedIncentive, setSelectedIncentive] = useState<{ rewardToken: `0x${string}`; pool: `0x${string}`; startTime: bigint; endTime: bigint; refundee: `0x${string}` } | null>(null);
@@ -133,6 +154,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
   const [withdrawTokenId, setWithdrawTokenId] = useState('');
   const [claimAmount, setClaimAmount] = useState('');
   const [view, setView] = useState<'table' | 'grid'>('table');
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [validPools, setValidPools] = useState<{
       tokenA: string;
       tokenALogo: string;
@@ -191,9 +213,6 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
   const { priceList } = usePrice();
   const theme = themes[selectedChainId as ThemeId] || themes[96];
   const [isMobile, setIsMobile] = useState(false);
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
 
   const publicClient = createPublicClient({
     chain,
@@ -273,191 +292,247 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
     if (!priceList || priceList.length < 2) return;
 
     const fetchPools = async () => {
-      const logCreateData = await publicClient.getContractEvents({
-        ...lib.v3FactoryContract,
-        eventName: 'PoolCreated',
-        fromBlock: lib.V3_FACTORYCreatedAt,
-        toBlock: 'latest',
-      });
+      const CACHE_KEY = `liquidity_pools_v1_${chainId}`;
+      let cachedData: { pools: typeof validPools; lastBlock: string } = { pools: [], lastBlock: "0" };
 
-      let CreateData = logCreateData.map((res: any) => ({
-        action: 'create',
-        token0: res.args.token0 as '0xstring',
-        token1: res.args.token1 as '0xstring',
-        fee: res.args.fee as '0xstring',
-        pool: res.args.pool as '0xstring',
-        tx: res.transactionHash as '0xstring',
-      }));
-
-      const results: typeof validPools = [];
-      const currencyTokens = [tokens[2].value, tokens[1].value, tokens[3].value];
-      let isListed = true;
-
-      for (const item of CreateData) {
-        isListed = true;
-        let tokenA = tokens.find(t => t.value.toLowerCase() === item.token0.toLowerCase());
-        let tokenB = tokens.find(t => t.value.toLowerCase() === item.token1.toLowerCase());
-
-        if (!tokenA) {
-          isListed = false;
-          const [symbolA] = await readContracts(config, {
-            contracts: [{
-              abi: erc20Abi,
-              address: item.token0,
-              functionName: 'symbol',
-            }],
-          });
-          tokenA = {
-            name: symbolA.result ?? 'UNKNOWN',
-            value: item.token0,
-            logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
-          };
-        }
-
-        if (!tokenB) {
-          isListed = false;
-          const [symbolB] = await readContracts(config, {
-            contracts: [{
-              abi: erc20Abi,
-              address: item.token1,
-              functionName: 'symbol',
-            }],
-          });
-          tokenB = {
-            name: symbolB.result ?? 'UNKNOWN',
-            value: item.token1,
-            logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u',
-          };
-        }
-
-        try {
-          const poolStatus = await readContracts(config, {
-            contracts: [
-              { abi: erc20Abi, address: tokenA.value as '0xstring', functionName: 'balanceOf', args: [item.pool] },
-              { abi: erc20Abi, address: tokenB.value as '0xstring', functionName: 'balanceOf', args: [item.pool] },
-            ],
-          });
-
-          let tokenAamount = poolStatus[0].result ?? BigInt(0);
-          let tokenBamount = poolStatus[1].result ?? BigInt(0);
-
-          let priceA = priceList.find(p => p.token === tokenA!.name)?.priceUSDT ?? 0;
-          let priceB = priceList.find(p => p.token === tokenB!.name)?.priceUSDT ?? 0;
-          let balanceA = Number(tokenAamount) / 1e18;
-          let balanceB = Number(tokenBamount) / 1e18;
-
-          const liquidityUSD = (balanceA * priceA) + (balanceB * priceB);
-
-          const blockAmountDaily = 86400 / blocktime;
-          const currentBlock = await publicClient.getBlockNumber();
-
-          const logBuyData = await publicClient.getContractEvents({
-            abi: erc20Abi,
-            address: tokenA.value as '0xstring',
-            eventName: 'Transfer',
-            args: { from: item.pool },
-            fromBlock: currentBlock - BigInt(blockAmountDaily),
-            toBlock: 'latest',
-          });
-
-          const BuyData = logBuyData.map((res: any) => ({
-            action: 'buy',
-            value: Number(formatEther(res.args.value)),
-            tx: res.transactionHash,
-          }));
-
-          const logSellData = await publicClient.getContractEvents({
-            abi: erc20Abi,
-            address: tokenA.value as '0xstring',
-            eventName: 'Transfer',
-            args: { to: item.pool },
-            fromBlock: currentBlock - BigInt(blockAmountDaily),
-            toBlock: 'latest',
-          });
-
-          const SellData = logSellData.map((res: any) => ({
-            action: 'sell',
-            value: Number(formatEther(res.args.value)),
-            tx: res.transactionHash,
-          }));
-
-          const logAddLiquidity = await publicClient.getContractEvents({
-            ...lib.positionManagerContract,
-            eventName: 'IncreaseLiquidity',
-            address: item.pool,
-            fromBlock: currentBlock - BigInt(blockAmountDaily),
-            toBlock: 'latest',
-          });
-
-          const addLiquidityData = logAddLiquidity.map((res: any) => ({
-            action: 'add',
-            value: Number(formatEther(res.args.value)),
-            tx: res.transactionHash,
-          }));
-
-          const logRemoveLiquidity = await publicClient.getContractEvents({
-            ...lib.positionManagerContract,
-            eventName: 'DecreaseLiquidity',
-            address: item.pool,
-            fromBlock: currentBlock - BigInt(blockAmountDaily),
-            toBlock: 'latest',
-          });
-
-          const removeLiquidityData = logRemoveLiquidity.map((res: any) => ({
-            action: 'remove',
-            value: Number(formatEther(res.args.value)),
-            tx: res.transactionHash,
-          }));
-
-          const liquidityTxs = new Set([
-            ...addLiquidityData.map((item: any) => item.tx),
-            ...removeLiquidityData.map((item: any) => item.tx),
-          ]);
-
-          const filteredBuyData = BuyData.filter((item: any) => !liquidityTxs.has(item.tx));
-          const filteredSellData = SellData.filter((item: any) => !liquidityTxs.has(item.tx));
-
-          const volumeToken = [...filteredBuyData, ...filteredSellData].reduce((sum, tx) => sum + tx.value, 0);
-          const feeRate = Number(item.fee) / 1_000_000;
-          const fee24h = volumeToken * feeRate * priceA;
-          const apr = ((fee24h * 365) / liquidityUSD) * 100 || 0;
-
-          const a = currencyTokens.indexOf(tokenA.value);
-          const b = currencyTokens.indexOf(tokenB.value);
-
-          if ((a !== -1 && b === -1) || (a !== -1 && b !== -1 && b < a)) {
-            [tokenA, tokenB] = [tokenB, tokenA];
-            [tokenAamount, tokenBamount] = [tokenBamount, tokenAamount];
-            [priceA, priceB] = [priceB, priceA];
-            [balanceA, balanceB] = [balanceB, balanceA];
+      // 1. Load from Cache
+      try {
+        const stored = localStorage.getItem(CACHE_KEY);
+        if (stored) {
+          cachedData = JSON.parse(stored);
+          if (cachedData.pools && cachedData.pools.length > 0) {
+            setValidPools(cachedData.pools);
+            setLoadingProgress(10); // Cache Loaded
           }
-
-          results.push({
-            tokenA: tokenA.name,
-            tokenALogo: tokenA.logo,
-            tokenAaddr: tokenA.value,
-            tokenB: tokenB.name,
-            tokenBLogo: tokenB.logo,
-            tokenBaddr: tokenB.value,
-            fee: Number(item.fee),
-            poolAddress: item.pool,
-            liquidity: liquidityUSD,
-            volume24h: volumeToken * priceA,
-            fee24h,
-            apr,
-            stakingApr: 0,
-            poolApr: apr,
-            themeId: chainConfig.chainId,
-            listed: isListed,
-          });
-        } catch (error) {
-          console.error(`Error fetching pool for ${tokenA.name}-${tokenB.name}:`, error);
         }
+      } catch (e) {
+        console.error("Failed to parse liquidity pool cache", e);
       }
 
-      setValidPools(results);
-      console.log('Valid pools:', results);
-      return results;
+      const latestBlock = await publicClient.getBlockNumber();
+      const startBlock =
+          cachedData.lastBlock && BigInt(cachedData.lastBlock) > lib.V3_FACTORYCreatedAt
+            ? BigInt(cachedData.lastBlock) + BigInt(1)
+            : lib.V3_FACTORYCreatedAt;
+
+       // ---------------------------------------------------------
+       // Helper: Refresh Stats for a Single Pool (24H Window)
+       // ---------------------------------------------------------
+       const getPoolStats = async (pool: any, currentBlock: bigint) => {
+          try {
+             if (!pool.poolAddress) return pool;
+             
+             // Daily block count (approx)
+             const blockAmountDaily = BigInt(86400 / blocktime);
+             const fromBlock = currentBlock > blockAmountDaily ? currentBlock - blockAmountDaily : BigInt(0);
+
+             // 1. Fetch Current Balances (Liquidity)
+             const poolStatus = await readContracts(config, {
+                contracts: [
+                  { abi: erc20Abi, address: pool.tokenAaddr as '0xstring', functionName: 'balanceOf', args: [pool.poolAddress] },
+                  { abi: erc20Abi, address: pool.tokenBaddr as '0xstring', functionName: 'balanceOf', args: [pool.poolAddress] },
+                ],
+              });
+
+             const tokenAamount = (poolStatus[0].result as bigint) ?? BigInt(0);
+             const tokenBamount = (poolStatus[1].result as bigint) ?? BigInt(0);
+
+             // 2. Fetch 24H Events (Transfer & Liquidity)
+             const [logBuyData, logSellData, logAddLiquidity, logRemoveLiquidity] = await Promise.all([
+                  publicClient.getContractEvents({
+                    abi: erc20Abi,
+                    address: pool.tokenAaddr as '0xstring',
+                    eventName: 'Transfer',
+                    args: { from: pool.poolAddress },
+                    fromBlock: fromBlock,
+                    toBlock: 'latest',
+                  }),
+                  publicClient.getContractEvents({
+                    abi: erc20Abi,
+                    address: pool.tokenAaddr as '0xstring',
+                    eventName: 'Transfer',
+                    args: { to: pool.poolAddress },
+                    fromBlock: fromBlock,
+                    toBlock: 'latest',
+                  }),
+                   publicClient.getContractEvents({
+                    ...lib.positionManagerContract,
+                    eventName: 'IncreaseLiquidity',
+                    address: pool.poolAddress,
+                    fromBlock: fromBlock,
+                    toBlock: 'latest',
+                  }),
+                  publicClient.getContractEvents({
+                    ...lib.positionManagerContract,
+                    eventName: 'DecreaseLiquidity',
+                    address: pool.poolAddress,
+                    fromBlock: fromBlock,
+                    toBlock: 'latest',
+                  })
+             ]);
+
+             // Filter out Liquidity Add/Remove from Volume
+             const liquidityTxs = new Set([
+                ...logAddLiquidity.map((item: any) => item.transactionHash),
+                ...logRemoveLiquidity.map((item: any) => item.transactionHash),
+             ]);
+
+             const BuyData = logBuyData.map((res: any) => ({
+                value: Number(formatEther(res.args.value)),
+                tx: res.transactionHash,
+             }));
+
+             const SellData = logSellData.map((res: any) => ({
+                value: Number(formatEther(res.args.value)),
+                tx: res.transactionHash,
+             }));
+
+             const filteredBuyData = BuyData.filter((item: any) => !liquidityTxs.has(item.tx));
+             const filteredSellData = SellData.filter((item: any) => !liquidityTxs.has(item.tx));
+             
+             const volumeToken = [...filteredBuyData, ...filteredSellData].reduce((sum: number, tx: any) => sum + tx.value, 0);
+
+             // Calculate USD Values
+             const priceA = priceList.find(p => p.token === pool.tokenA)?.priceUSDT ?? 0;
+             const priceB = priceList.find(p => p.token === pool.tokenB)?.priceUSDT ?? 0;
+             
+             const balanceA = Number(formatEther(tokenAamount));
+             const balanceB = Number(formatEther(tokenBamount));
+             const liquidityUSD = (balanceA * priceA) + (balanceB * priceB);
+             
+             const volumeUSD = volumeToken * priceA; // Assuming volume is calculated in Token A
+             const feeRate = Number(pool.fee) / 1_000_000;
+             const fee24h = volumeUSD * feeRate;
+             const apr = liquidityUSD > 0 ? ((fee24h * 365) / liquidityUSD) * 100 : 0;
+
+             return {
+                 ...pool,
+                 liquidity: liquidityUSD,
+                 volume24h: volumeUSD,
+                 fee24h: fee24h,
+                 apr: apr,
+                 poolApr: apr
+             };
+
+          } catch (e) {
+              console.error(`Failed to update stats for pool ${pool.tokenA}/${pool.tokenB}`, e);
+              return pool;
+          }
+       };
+
+      setLoadingProgress(20); // Start Fetching
+
+      // ---------------------------------------------------------
+      // A. Discover NEW Pools (Incremental)
+      // ---------------------------------------------------------
+      let newResults: any[] = [];
+      
+      if (startBlock <= latestBlock) {
+          const logCreateData = await publicClient.getContractEvents({
+            ...lib.v3FactoryContract,
+            eventName: 'PoolCreated',
+            fromBlock: startBlock,
+            toBlock: 'latest',
+          });
+
+          if (logCreateData.length > 0) {
+             setLoadingProgress(40);
+             const CreateData = logCreateData.map((res: any) => ({
+                token0: res.args.token0 as '0xstring',
+                token1: res.args.token1 as '0xstring',
+                fee: res.args.fee as '0xstring',
+                pool: res.args.pool as '0xstring',
+             }));
+
+             const currencyTokens = [tokens[2].value, tokens[1].value, tokens[3].value];
+             
+             for (const item of CreateData) {
+                // Discovery Logic (Symbols, Listings)
+                let isListed = true;
+                let tokenA = tokens.find(t => t.value.toLowerCase() === item.token0.toLowerCase());
+                let tokenB = tokens.find(t => t.value.toLowerCase() === item.token1.toLowerCase());
+
+                if (!tokenA) {
+                    isListed = false;
+                    try {
+                        const [symbolA] = await readContracts(config, { contracts: [{ abi: erc20Abi, address: item.token0, functionName: 'symbol' }] });
+                         tokenA = { name: symbolA.result as string ?? 'UNK', value: item.token0, logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u' };
+                    } catch { tokenA = { name: 'UNK', value: item.token0, logo: '' } }
+                }
+
+                if (!tokenB) {
+                    isListed = false;
+                    try {
+                        const [symbolB] = await readContracts(config, { contracts: [{ abi: erc20Abi, address: item.token1, functionName: 'symbol' }] });
+                         tokenB = { name: symbolB.result as string ?? 'UNK', value: item.token1, logo: 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u' };
+                    } catch { tokenB = { name: 'UNK', value: item.token1, logo: '' } }
+                }
+
+                // Normalise Order
+                let tokenAobj = tokenA;
+                let tokenBobj = tokenB;
+                const a = currencyTokens.indexOf(tokenAobj.value);
+                const b = currencyTokens.indexOf(tokenBobj.value);
+                if ((a !== -1 && b === -1) || (a !== -1 && b !== -1 && b < a)) {
+                    [tokenAobj, tokenBobj] = [tokenBobj, tokenAobj];
+                }
+
+                newResults.push({
+                    tokenA: tokenAobj.name,
+                    tokenALogo: tokenAobj.logo,
+                    tokenAaddr: tokenAobj.value,
+                    tokenB: tokenBobj.name,
+                    tokenBLogo: tokenBobj.logo,
+                    tokenBaddr: tokenBobj.value,
+                    fee: Number(item.fee),
+                    poolAddress: item.pool,
+                    liquidity: 0, 
+                    volume24h: 0,
+                    fee24h: 0,
+                    apr: 0,
+                    stakingApr: 0,
+                    poolApr: 0,
+                    themeId: chainConfig.chainId,
+                    listed: isListed,
+                });
+             }
+          }
+      }
+
+      // ---------------------------------------------------------
+      // B. Refresh Stats for ALL Pools (Cached + New)
+      // ---------------------------------------------------------
+      setLoadingProgress(60); 
+      
+      const combinedPools = [...cachedData.pools, ...newResults];
+      // Deduplicate
+      const uniquePoolsRaw = Array.from(new Map(combinedPools.map(p => [p.poolAddress.toLowerCase(), p])).values());
+
+      // Update 24H Stats for every pool
+      const updatedPools = await Promise.all(
+          uniquePoolsRaw.map(async (pool, idx) => {
+              // Throttle slightly or just run parallel. 
+              // React sets state frequently, so this is fine.
+              if (idx % 5 === 0 && uniquePoolsRaw.length > 5) {
+                   setLoadingProgress(60 + Math.floor((idx / uniquePoolsRaw.length) * 35));
+              }
+              return getPoolStats(pool, latestBlock);
+          })
+      );
+
+      setValidPools(updatedPools);
+      setLoadingProgress(100);
+      
+      localStorage.setItem(
+        CACHE_KEY,
+        JSON.stringify({
+          pools: updatedPools,
+          lastBlock: latestBlock.toString(),
+        })
+      );
+
+      console.log('Valid pools refreshed:', updatedPools);
+      return updatedPools;
     };
 
     const fetchPrograms = async (pools: typeof validPools) => {
@@ -488,7 +563,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
             ...lib.positionManagerContract, // Use position manager contract definition
             eventName: 'Transfer',
             args: { to: stakingContract.address },
-            fromBlock: 'earliest', 
+            fromBlock: stakingCreatedAt, 
             toBlock: 'latest',
           }) as any[];
 
@@ -722,11 +797,19 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
       }
     });
 
+
+  
+  const totalPoolPages = Math.ceil(sortedPools.length / itemsPerPage);
+  const paginatedPools = sortedPools.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
     const sortedStaking = [...stakingList]
     .filter(pool => {
       if (listFilter === 'myRP') return pool.staked > 0;
       return true;
     });
+
+  const totalStakingPages = Math.ceil(sortedStaking.length / itemsPerPage);
+  const paginatedStaking = sortedStaking.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortBy !== field) return <ChevronDown className="w-4 h-4 opacity-50" />;
@@ -744,6 +827,15 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
             Liquidity Pools
           </h1>
           <p className="text-slate-400">Provide liquidity and earn fees</p>
+          
+          {loadingProgress < 100 && (
+             <div className="mt-4 w-full md:w-1/2">
+                <div className="h-1 w-full bg-gray-700 rounded-full overflow-hidden">
+                   <div className={`h-full bg-gradient-to-r ${theme.primary} transition-all duration-300`} style={{ width: `${loadingProgress}%` }}></div>
+                </div>
+                <p className="text-xs text-gray-400 mt-1 font-mono">Loading data... {loadingProgress}%</p>
+             </div>
+          )}
         </div>
         <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="backdrop-blur-xl rounded-xl border border-slate-700/50 p-6">
@@ -794,7 +886,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           ].filter(i => i.show).map(({ label, value }) => (
             <button
               key={value}
-              onClick={() => setListFilter(value)}
+              onClick={() => handleListFilterChange(value)}
               className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all duration-200
                 ${listFilter === value
                   ? `bg-gradient-to-r ${theme.primary} text-black shadow-lg shadow-${theme.accent}/30`
@@ -836,7 +928,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
       ].filter(i => i.show).map(({ label, value }) => (
         <button
           key={value}
-          onClick={() => setListFilter(value)}
+          onClick={() => handleListFilterChange(value)}
           className={`p-3 text-xs font-medium rounded-xl border transition-all duration-200
             ${listFilter === value
               ? `bg-gradient-to-r ${theme.primary} text-black`
@@ -853,7 +945,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
       <div>
         {/* --- Desktop Table View (Reward) --- */}
         <div className="hidden lg:block">
-          <div className="backdrop-blur-xl rounded-2xl border border-slate-700/50 overflow-hidden">
+          {view === 'table' ? (
+           <div className="backdrop-blur-xl rounded-2xl border border-slate-700/50 overflow-hidden">
             <div className="grid [grid-template-columns:1.5fr_1fr_1fr_1fr_1fr_auto] gap-4 p-6 border-b border-slate-700/50">
               <button onClick={() => handleSort('name')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 Program Name <SortIcon field="name" />
@@ -873,7 +966,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
               <div className="font-medium text-slate-300">Action</div>
             </div>
             <div className="divide-y divide-slate-700/30">
-              {sortedStaking.map((pool, index) => {
+              {paginatedStaking.map((pool, index) => {
                 const theme = themes[pool.themeId as ThemeId];
                 return (
                   <div
@@ -928,7 +1021,117 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 );
               })}
             </div>
-          </div>
+            {totalStakingPages > 1 && (
+                <div className="flex justify-between items-center px-4 py-4 border-t border-slate-700/50">
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === 1}
+                        onClick={() => router.push(`${pathname}?page=${currentPage - 1}`)}
+                    >
+                        Previous
+                    </Button>
+                    <span className="text-slate-400 text-sm">
+                        Page {currentPage} of {totalStakingPages}
+                    </span>
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === totalStakingPages}
+                        onClick={() => router.push(`${pathname}?page=${currentPage + 1}`)}
+                    >
+                        Next
+                    </Button>
+                </div>
+            )}
+           </div>
+          ) : (
+            <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {paginatedStaking.map((pool, index) => {
+                    const theme = themes[pool.themeId as ThemeId];
+                    return (
+                        <div
+                        key={index}
+                        className={`bg-slate-800/50 backdrop-blur-xl rounded-xl border ${theme.border} p-6 hover:bg-slate-800/70 transition-all cursor-pointer group relative overflow-hidden`}
+                        >
+                        <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                            <div className="relative w-12 h-12">
+                                <img src={pool.tokenALogo || '/default2.png'} alt="token1" className="w-10 h-10 rounded-full border-2 border-[#1a1b2e] bg-white z-0 absolute top-0 left-0" />
+                                <img src={pool.tokenBLogo || '/default2.png'} alt="token2" className="w-8 h-8 rounded-full border-2 border-[#1a1b2e] bg-white z-10 absolute bottom-0 right-0" />
+                            </div>
+                            <div>
+                                <div className="text-[10px] text-slate-400 mb-0.5 uppercase tracking-wide">{pool.chain}</div>
+                                <div className={`font-bold text-lg text-white group-hover:${theme.text} transition-colors`}>
+                                {pool.name}
+                                </div>
+                                <div className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-300`}>
+                                <span>Fee Tiers: {pool.feeList?.join(' , ')}</span>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <div className="text-xs text-slate-400 mb-1">Total Staked</div>
+                                <div className="text-white font-medium">{pool.totalStaked}</div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-400 mb-1">APR</div>
+                                <div className={`font-bold ${theme.text}`}>{formatPercentage(pool.apr)}</div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-400 mb-1">Pending</div>
+                                <div className="text-white font-medium">{Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 8 }).format(Number(pool.pending))}</div>
+                            </div>
+                            <div>
+                                <div className="text-xs text-slate-400 mb-1">Your Stake</div>
+                                <div className="text-white font-medium">{pool.staked}</div>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2 mt-auto pt-4 border-t border-slate-700/30">
+                            <Button variant="secondary" className="flex-1 h-8 text-xs" onClick={() => {
+                                setSelectedProgramAddr(pool.poolAddress as `0x${string}`);
+                                setSelectedIncentive({
+                                rewardToken: pool.rewardToken as `0x${string}`,
+                                pool: pool.poolAddress as `0x${string}`,
+                                startTime: pool.startTime!,
+                                endTime: pool.endTime!,
+                                refundee: pool.refundee as `0x${string}`
+                                });
+                                setOpenStake(true);
+                            }}>
+                                Go Farm
+                            </Button>
+                        </div>
+                        </div>
+                    );
+                })}
+             </div>
+             {totalStakingPages > 1 && (
+                <div className="flex justify-between items-center px-4 py-4 border-t border-slate-700/50">
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === 1}
+                        onClick={() => router.push(`${pathname}?page=${currentPage - 1}`)}
+                    >
+                        Previous
+                    </Button>
+                    <span className="text-slate-400 text-sm">
+                        Page {currentPage} of {totalStakingPages}
+                    </span>
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === totalStakingPages}
+                        onClick={() => router.push(`${pathname}?page=${currentPage + 1}`)}
+                    >
+                        Next
+                    </Button>
+                </div>
+            )}
+             </div>
+          )}
         </div>
 
         {/* --- Mobile List View (Reward) --- */}
@@ -1033,7 +1236,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 <div className="font-medium text-slate-300">Action</div>
               </div>
               <div className="divide-y divide-slate-700/30">
-                {sortedPools.map((pool) => {
+                {paginatedPools.map((pool) => {
                   const theme = themes[pool.themeId as ThemeId];
                   return (
                     <div
@@ -1078,11 +1281,31 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                   );
                 })}
               </div>
+              {totalPoolPages > 1 && (
+                <div className="flex justify-between items-center px-6 py-4 border-t border-slate-700/50">
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === 1}
+                        onClick={() => router.push(`${pathname}?page=${currentPage - 1}`)}
+                    >
+                        Previous
+                    </Button>
+                    <span className="text-slate-400 text-sm">
+                        Page {currentPage} of {totalPoolPages}
+                    </span>
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === totalPoolPages}
+                        onClick={() => router.push(`${pathname}?page=${currentPage + 1}`)}
+                    >
+                        Next
+                    </Button>
+                </div>
+              )}
             </div>
           ) : (
-            // Grid View
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sortedPools.map((pool) => {
+             <div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {paginatedPools.map((pool) => {
                 const theme = themes[pool.themeId as ThemeId];
                 return (
                   <div
@@ -1141,7 +1364,28 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 );
               })}
             </div>
-          )}
+              {totalPoolPages > 1 && (
+                <div className="flex justify-between items-center px-6 py-4 border-t border-slate-700/50">
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === 1}
+                        onClick={() => router.push(`${pathname}?page=${currentPage - 1}`)}
+                    >
+                        Previous
+                    </Button>
+                    <span className="text-slate-400 text-sm">
+                        Page {currentPage} of {totalPoolPages}
+                    </span>
+                    <Button 
+                        variant="ghost" 
+                        disabled={currentPage === totalPoolPages}
+                        onClick={() => router.push(`${pathname}?page=${currentPage + 1}`)}
+                    >
+                        Next
+                    </Button>
+                </div>
+              )}
+          </div>)}
         </div>
 
         {/* --- Mobile View (Liquidity) --- */}
@@ -1149,7 +1393,7 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
           <div className="mb-3">
             <h2 className="text-sm font-semibold text-white">Liquidity Pools</h2>
           </div>
-          {sortedPools.map((pool) => {
+          {paginatedPools.map((pool) => {
             const theme = themes[pool.themeId as ThemeId];
             return (
               <div
@@ -1159,8 +1403,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 {/* Header with tokens */}
                 <div className="flex items-start gap-2 mb-2">
                   <div className="relative w-10 h-10 shrink-0">
-                    <img src={pool.tokenALogo || '/default2.png'} alt="token1" className="w-8 h-8 rounded-full border-2 border-[#1a1b2e] bg-white z-0 absolute top-0 left-0" />
-                    <img src={pool.tokenBLogo || '/default2.png'} alt="token2" className="w-6 h-6 rounded-full border-2 border-[#1a1b2e] bg-white z-10 absolute bottom-0 right-0" />
+                    <img src={pool.tokenALogo || 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u'} alt="token1" className="w-8 h-8 rounded-full border-2 border-[#1a1b2e] bg-white z-0 absolute top-0 left-0" />
+                    <img src={pool.tokenBLogo || 'https://cmswap.mypinata.cloud/ipfs/bafkreiexe7q5ptjflrlccf3vtqdbpwk36j3emlsulksx7ot52e3uqyqu3u'} alt="token2" className="w-6 h-6 rounded-full border-2 border-[#1a1b2e] bg-white z-10 absolute bottom-0 right-0" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-white text-xs leading-tight">
@@ -1204,6 +1448,30 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
               </div>
             );
           })}
+                 {/* Mobile Pagination */}
+                 {totalPoolPages > 1 && (
+                    <div className="flex justify-between items-center px-4 py-4 border-t border-slate-700/50">
+                        <Button 
+                            variant="ghost" 
+                            size="sm"
+                            disabled={currentPage === 1}
+                            onClick={() => router.push(`${pathname}?page=${currentPage - 1}`)}
+                        >
+                            Previous
+                        </Button>
+                        <span className="text-slate-400 text-xs">
+                            Page {currentPage} of {totalPoolPages}
+                        </span>
+                        <Button 
+                            variant="ghost" 
+                            size="sm"
+                            disabled={currentPage === totalPoolPages}
+                            onClick={() => router.push(`${pathname}?page=${currentPage + 1}`)}
+                        >
+                            Next
+                        </Button>
+                    </div>
+                )}
         </div>
       </div>
     }
