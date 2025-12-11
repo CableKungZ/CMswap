@@ -21,6 +21,7 @@ import Link from 'next/link';
 import StakingV3Modal from './StakingV3Modal';
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePrice } from '@/context/getPrice';
 
 type ThemeId = 96 | 8899 | 56 | 3501 | 10143 | 25925;
@@ -747,7 +748,37 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
             });
           }
         }
+
         setStakingList(items);
+
+        // Update validPools with the highest staking APR found for each pool
+        const poolMaxStakingMap = new Map<string, number>();
+        for (const item of items) {
+            const pAddr = item.poolAddress.toLowerCase();
+            const currMax = poolMaxStakingMap.get(pAddr) || 0;
+            if (item.stakingApr > currMax) {
+                poolMaxStakingMap.set(pAddr, item.stakingApr);
+            }
+        }
+
+        const updatedPools = pools.map(p => {
+             const pAddr = p.poolAddress.toLowerCase();
+             const maxStakingApr = poolMaxStakingMap.get(pAddr) || 0;
+             // Ensure we don't double count if logic runs multiple times, 
+             // but here we are recalculating derived state.
+             const totalApr = p.poolApr + maxStakingApr;
+             
+             return {
+                 ...p,
+                 stakingApr: maxStakingApr,
+                 apr: totalApr
+             }
+        });
+        
+        // Only update if there's a difference to avoid loops? 
+        // fetchPrograms is called once at the end of fetchPools.
+        setValidPools(updatedPools);
+
       } catch (e) {
         console.error('fetchPrograms (UniswapV3Staking) error:', e);
         setStakingList([]);
@@ -951,16 +982,16 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
               <button onClick={() => handleSort('name')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 Program Name <SortIcon field="name" />
               </button>
-              <button onClick={() => handleSort('liquidity')} className="flex mx-[-16px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+              <button onClick={() => handleSort('liquidity')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 Total Stake <SortIcon field="liquidity" />
               </button>
-              <button onClick={() => handleSort('volume24h')} className="flex mx-[-32px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+              <button onClick={() => handleSort('volume24h')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 APR <SortIcon field="volume24h" />
               </button>
-              <button onClick={() => handleSort('fee24h')} className="flex mx-[-48px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+              <button onClick={() => handleSort('fee24h')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 Pending <SortIcon field="fee24h" />
               </button>
-              <button onClick={() => handleSort('apr')} className="flex mx-[-60px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+              <button onClick={() => handleSort('apr')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                 Your Stake <SortIcon field="apr" />
               </button>
               <div className="font-medium text-slate-300">Action</div>
@@ -992,7 +1023,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                       <span className="text-white font-medium">{(pool.totalStaked)}</span>
                     </div>
                     <div className="flex flex-col justify-center">
-                      <span className={`font-bold text-lg ${theme.text}`}>{formatPercentage(pool.apr)}</span>
+                      <TooltipProvider>
+                        <Tooltip delayDuration={0}>
+                          <TooltipTrigger asChild>
+                            <span className={`font-bold text-lg ${theme.text} cursor-help border-b border-dotted border-white/20 inline-block`}>{formatPercentage(pool.apr)}</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="bg-slate-900 border-slate-700">
+                             <div className="text-xs space-y-1">
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Total APR:</span>
+                                  <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Reward APR:</span>
+                                  <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">LP APR:</span>
+                                  <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                </div>
+                             </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                     <div className="flex flex-col justify-center">
                       <span className="text-white font-medium">
@@ -1078,7 +1131,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                             </div>
                             <div>
                                 <div className="text-xs text-slate-400 mb-1">APR</div>
-                                <div className={`font-bold ${theme.text}`}>{formatPercentage(pool.apr)}</div>
+                                <TooltipProvider>
+                                    <Tooltip delayDuration={0}>
+                                        <TooltipTrigger asChild>
+                                           <div className={`font-bold ${theme.text} cursor-help inline-block border-b border-dotted border-white/20`}>{formatPercentage(pool.apr)}</div>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="bg-slate-900 border-slate-700">
+                                            <div className="text-xs space-y-1">
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">Total APR:</span>
+                                                <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">Reward APR:</span>
+                                                <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">LP APR:</span>
+                                                <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                                </div>
+                                            </div>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
                             </div>
                             <div>
                                 <div className="text-xs text-slate-400 mb-1">Pending</div>
@@ -1185,7 +1260,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 {/* APR highlight */}
                 <div className="flex items-center justify-between mb-2 p-2 bg-slate-900/50 rounded-lg">
                   <span className="text-[10px] text-slate-400">APR</span>
-                  <span className={`font-bold text-base ${theme.text}`}>{formatPercentage(pool.apr)}</span>
+                  <TooltipProvider>
+                        <Tooltip delayDuration={0}>
+                          <TooltipTrigger asChild>
+                             <span className={`font-bold text-base ${theme.text} cursor-help inline-block border-b border-dotted border-white/20`}>{formatPercentage(pool.apr)}</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="bg-slate-900 border-slate-700">
+                             <div className="text-xs space-y-1">
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Total APR:</span>
+                                  <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Reward APR:</span>
+                                  <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">LP APR:</span>
+                                  <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                </div>
+                             </div>
+                          </TooltipContent>
+                        </Tooltip>
+                  </TooltipProvider>
                 </div>
 
                 {/* Action button */}
@@ -1221,16 +1318,16 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 <button onClick={() => handleSort('name')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                   Pool <SortIcon field="name" />
                 </button>
-                <button onClick={() => handleSort('liquidity')} className="flex mx-[-16px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+                <button onClick={() => handleSort('liquidity')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                   Liquidity <SortIcon field="liquidity" />
                 </button>
-                <button onClick={() => handleSort('volume24h')} className="flex mx-[-32px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+                <button onClick={() => handleSort('volume24h')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                   Vol 24H <SortIcon field="volume24h" />
                 </button>
-                <button onClick={() => handleSort('fee24h')} className="flex mx-[-48px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+                <button onClick={() => handleSort('fee24h')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                   Fee 24H <SortIcon field="fee24h" />
                 </button>
-                <button onClick={() => handleSort('apr')} className="flex mx-[-60px] items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
+                <button onClick={() => handleSort('apr')} className="flex items-center gap-2 text-left font-medium text-slate-300 hover:text-white transition-colors">
                   APR 24H <SortIcon field="apr" />
                 </button>
                 <div className="font-medium text-slate-300">Action</div>
@@ -1267,7 +1364,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                         <span className="text-white font-medium">{formatNumber(pool.fee24h)}</span>
                       </div>
                       <div className="flex flex-col justify-center">
-                        <span className={`font-bold text-lg ${theme.text}`}>{formatPercentage(pool.apr)}</span>
+                        <TooltipProvider>
+                        <Tooltip delayDuration={0}>
+                          <TooltipTrigger asChild>
+                            <span className={`font-bold text-lg ${theme.text} cursor-help inline-block border-b border-dotted border-white/20`}>{formatPercentage(pool.apr)}</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="bg-slate-900 border-slate-700">
+                             <div className="text-xs space-y-1">
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Total APR:</span>
+                                  <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Reward APR:</span>
+                                  <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">LP APR:</span>
+                                  <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                </div>
+                             </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                       </div>
                       <div className="flex items-center gap-2 whitespace-nowrap">
                         <Button variant="ghost" className="cursor-pointer px-2 py-1 text-xs" onClick={() => handleClick(`/swap?input=${pool.tokenAaddr}&output=${pool.tokenBaddr}&tab=liquidity`)}>
@@ -1348,7 +1467,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                       </div>
                       <div>
                         <div className="text-xs text-slate-400 mb-1">APR</div>
-                        <div className={`font-bold ${theme.text}`}>{formatPercentage(pool.apr)}</div>
+                        <TooltipProvider>
+                                    <Tooltip delayDuration={0}>
+                                        <TooltipTrigger asChild>
+                                           <div className={`font-bold ${theme.text} cursor-help inline-block border-b border-dotted border-white/20`}>{formatPercentage(pool.apr)}</div>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="bg-slate-900 border-slate-700">
+                                            <div className="text-xs space-y-1">
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">Total APR:</span>
+                                                <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">Reward APR:</span>
+                                                <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-4">
+                                                <span className="text-slate-400">LP APR:</span>
+                                                <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                                </div>
+                                            </div>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
                       </div>
                     </div>
 
@@ -1432,7 +1573,29 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                   </div>
                   <div>
                     <div className="text-slate-400">APR</div>
-                    <div className={`font-bold text-sm ${theme.text}`}>{formatPercentage(pool.apr)}</div>
+                    <TooltipProvider>
+                        <Tooltip delayDuration={0}>
+                          <TooltipTrigger asChild>
+                             <div className={`font-bold text-sm ${theme.text} cursor-help border-b border-dotted border-white/20 inline-block`}>{formatPercentage(pool.apr)}</div>
+                          </TooltipTrigger>
+                          <TooltipContent className="bg-slate-900 border-slate-700">
+                             <div className="text-xs space-y-1">
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Total APR:</span>
+                                  <span className="font-bold text-white">{formatPercentage(pool.apr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Reward APR:</span>
+                                  <span className="font-bold text-green-400">{formatPercentage(pool.stakingApr)}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">LP APR:</span>
+                                  <span className="font-bold text-blue-400">{formatPercentage(pool.poolApr)}</span>
+                                </div>
+                             </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                   </div>
                 </div>
 
