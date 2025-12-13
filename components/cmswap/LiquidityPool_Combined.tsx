@@ -359,23 +359,35 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                    publicClient.getContractEvents({
                     ...lib.positionManagerContract,
                     eventName: 'IncreaseLiquidity',
-                    address: pool.poolAddress,
+                    // Note: IncreaseLiquidity events are emitted from Position Manager, not the pool
+                    // We cannot filter by pool address in the query, so we fetch all and filter below
                     fromBlock: fromBlock,
                     toBlock: 'latest',
                   }),
                   publicClient.getContractEvents({
                     ...lib.positionManagerContract,
                     eventName: 'DecreaseLiquidity',
-                    address: pool.poolAddress,
+                    // Note: DecreaseLiquidity events are emitted from Position Manager, not the pool
+                    // We cannot filter by pool address in the query, so we fetch all and filter below
                     fromBlock: fromBlock,
                     toBlock: 'latest',
                   })
+             ])
+
+             // 3. Filter Liquidity Events to only those related to THIS pool
+             // We check if the transaction has Transfer events involving this pool
+             const poolTransferTxs = new Set([
+                ...logBuyData.map((item: any) => item.transactionHash),
+                ...logSellData.map((item: any) => item.transactionHash),
              ]);
 
-             // Filter out Liquidity Add/Remove from Volume
-             const liquidityTxs = new Set([
-                ...logAddLiquidity.map((item: any) => item.transactionHash),
-                ...logRemoveLiquidity.map((item: any) => item.transactionHash),
+             const relevantLiquidityTxs = new Set([
+                ...logAddLiquidity
+                   .filter((item: any) => poolTransferTxs.has(item.transactionHash))
+                   .map((item: any) => item.transactionHash),
+                ...logRemoveLiquidity
+                   .filter((item: any) => poolTransferTxs.has(item.transactionHash))
+                   .map((item: any) => item.transactionHash),
              ]);
 
              const BuyData = logBuyData.map((res: any) => ({
@@ -388,8 +400,8 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
                 tx: res.transactionHash,
              }));
 
-             const filteredBuyData = BuyData.filter((item: any) => !liquidityTxs.has(item.tx));
-             const filteredSellData = SellData.filter((item: any) => !liquidityTxs.has(item.tx));
+             const filteredBuyData = BuyData.filter((item: any) => !relevantLiquidityTxs.has(item.tx));
+             const filteredSellData = SellData.filter((item: any) => !relevantLiquidityTxs.has(item.tx));
              
              const volumeToken = [...filteredBuyData, ...filteredSellData].reduce((sum: number, tx: any) => sum + tx.value, 0);
 
