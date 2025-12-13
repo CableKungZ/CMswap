@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
+import { ChevronDown, TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
 import { FiGrid, FiList } from 'react-icons/fi';
 import { simulateContract, waitForTransactionReceipt, writeContract, readContract, readContracts, getBalance, sendTransaction, type WriteContractErrorType } from '@wagmi/core';
 import { config } from '@/config/reown';
@@ -854,19 +854,13 @@ export default function LiquidityPool({ chainConfig }: { chainConfig: ChainConfi
     <div className={`min-h-screen ${theme.bg}`}>
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8 mt-[120px]">
-          <h1 className={`text-4xl font-bold bg-gradient-to-r ${theme.primary} bg-clip-text text-transparent mb-2`}>
+          <h1 className={`text-4xl font-bold bg-gradient-to-r ${theme.primary} bg-clip-text text-transparent mb-2 flex items-center gap-4`}>
             Liquidity Pools
+            {loadingProgress < 100 && (
+                <Loader2 className="w-6 h-6 animate-spin text-slate-400 opacity-80" />
+            )}
           </h1>
           <p className="text-slate-400">Provide liquidity and earn fees</p>
-          
-          {loadingProgress < 100 && (
-             <div className="mt-4 w-full md:w-1/2">
-                <div className="h-1 w-full bg-gray-700 rounded-full overflow-hidden">
-                   <div className={`h-full bg-gradient-to-r ${theme.primary} transition-all duration-300`} style={{ width: `${loadingProgress}%` }}></div>
-                </div>
-                <p className="text-xs text-gray-400 mt-1 font-mono">Loading data... {loadingProgress}%</p>
-             </div>
-          )}
         </div>
         <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="backdrop-blur-xl rounded-xl border border-slate-700/50 p-6">
