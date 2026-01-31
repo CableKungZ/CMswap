@@ -47,7 +47,11 @@ export default function SendTokenComponent({ setIsLoading, setErrMsg, chainConfi
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [amountMode, setAmountMode] = useState<"equal" | "specific">("equal");
     const [specificAmounts, setSpecificAmounts] = useState<{ address: string; amount: string }[]>([]);
-    const parseAddresses = (input: string) => input.split(/[\n,]+/).map((addr) => addr.trim()).filter(Boolean);
+    const [specificText, setSpecificText] = useState<string>('');
+    const [showCSVEditor, setShowCSVEditor] = useState(false);
+    const [specificPage, setSpecificPage] = useState<number>(1);
+    const SPECIFIC_PAGE_SIZE = 10;
+    const parseAddresses = (input: string) => input.split(/[\n,\t;]+/).map((addr) => addr.trim()).filter(Boolean);
     const multiAddresses = React.useMemo(() => parseAddresses(multiInput), [multiInput]);
     const amountLabel = isMultiTransfer ?  multiMode === "variable" ? "Amount Range (per address)" : "Amount per Address" : "Amount to Send";
     const downloadCSVTpl = () => {
@@ -61,19 +65,28 @@ export default function SendTokenComponent({ setIsLoading, setErrMsg, chainConfi
         URL.revokeObjectURL(url);
     };
     const parseAddressAmountCSV = (csvText: string): { address: string; amount: string }[] => {
-        const lines = csvText.trim().split('\n');
+        // Normalize CRLF and trim
+        const normalized = csvText.replace(/\r/g, '').trim();
+        const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
         if (lines.length < 2) throw new Error("CSV must have header and at least one data row");
-        const header = lines[0].toLowerCase().trim();
-        if (!header.includes('address') || !header.includes('amount')) throw new Error("CSV must have 'address' and 'amount' columns");
+        // Detect header columns and delimiter (support comma, tab, semicolon)
+        const headerParts = lines[0].split(/[\t,;]+/).map(h => h.trim().toLowerCase());
+        const addrIdx = headerParts.indexOf('address');
+        const amtIdx = headerParts.indexOf('amount');
+        if (addrIdx === -1 || amtIdx === -1) throw new Error("CSV must have 'address' and 'amount' columns");
         const result: { address: string; amount: string }[] = [];
         for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
+            const line = lines[i];
             if (!line) continue;
-            const parts = line.split(',').map(p => p.trim());
-            if (parts.length < 2) continue;
-            const address = parts[0];
-            const amount = parts[1];
-            if (address && amount) result.push({ address, amount });
+            // split by comma, tab or semicolon
+            const parts = line.split(/[\t,;]+/).map(p => p.trim()).filter(Boolean);
+            if (parts.length <= Math.max(addrIdx, amtIdx)) continue;
+            const address = parts[addrIdx];
+            let amount = parts[amtIdx];
+            if (!address || !amount) continue;
+            // remove thousand separators like 1,234.56
+            amount = amount.replace(/,/g, '');
+            result.push({ address, amount });
         }
         return result;
     };
@@ -92,13 +105,27 @@ export default function SendTokenComponent({ setIsLoading, setErrMsg, chainConfi
         if (!file) return;
         try {
             const text = await file.text();
-            if (amountMode === "specific") {
-                const parsed = parseAddressAmountCSV(text);
+            // Try to parse CSV with address & amount first; if successful auto-switch to specific mode
+            let parsed: { address: string; amount: string }[] = [];
+            try {
+                parsed = parseAddressAmountCSV(text);
+            } catch (e) {
+                parsed = [];
+            }
+            if (parsed.length > 0) {
+                setAmountMode('specific');
                 setSpecificAmounts(parsed);
+                setSpecificText(parsed.map(item => `${item.address},${item.amount}`).join('\n'));
                 setMultiInput(parsed.map(item => item.address).join('\n'));
+                setSpecificPage(1);
+                setShowCSVEditor(false);
             } else {
+                // fallback: treat as plain address list / text
                 setMultiInput(text);
-                setSpecificAmounts([]);
+                if (amountMode === 'specific') {
+                    setSpecificAmounts([]);
+                    setSpecificText('');
+                }
             }
             setUploadError(null);
         } catch (err) {
@@ -112,6 +139,44 @@ export default function SendTokenComponent({ setIsLoading, setErrMsg, chainConfi
         const random = Math.random() * (max - min) + min;
         return random.toFixed(10);
     };
+
+    const updateSpecificAmount = (index: number, val: string) => {
+        const sanitized = val.replace(/,/g, '').trim();
+        setSpecificAmounts(prev => {
+            const next = [...prev];
+            next[index] = { ...next[index], amount: sanitized };
+            setSpecificText(next.map(it => `${it.address},${it.amount}`).join('\n'));
+            setMultiInput(next.map(it => it.address).join('\n'));
+            return next;
+        });
+    };    
+
+    const removeSpecific = (index: number) => {
+        setSpecificAmounts(prev => {
+            const next = prev.filter((_, i) => i !== index);
+            setSpecificText(next.map(it => `${it.address},${it.amount}`).join('\n'));
+            setMultiInput(next.map(it => it.address).join('\n'));
+            // adjust page if current page becomes empty
+            const lastPage = Math.max(1, Math.ceil(next.length / SPECIFIC_PAGE_SIZE));
+            setSpecificPage(prevPage => Math.min(prevPage, lastPage));
+            return next;
+        });
+    };
+
+    const loadSpecificFromText = () => {
+        try {
+            const parsed = parseAddressAmountCSV(specificText);
+            if (parsed.length === 0) throw new Error('No valid rows found');
+            setSpecificAmounts(parsed);
+            setSpecificPage(1);
+            setMultiInput(parsed.map(item => item.address).join('\n'));
+            setShowCSVEditor(false);
+            setUploadError(null);
+        } catch (err) {
+            setUploadError(err instanceof Error ? err.message : 'Invalid CSV');
+        }
+    };
+
     async function handleSend() {
         if (!address) return;
         setIsLoading(true);
@@ -342,10 +407,64 @@ export default function SendTokenComponent({ setIsLoading, setErrMsg, chainConfi
                         <div className="p-3 bg-[#162638] rounded-lg border border-gray-600">
                             <p className="text-xs text-gray-400 mb-2">Upload CSV with specific amounts per address.</p>
                             <p className="text-xs text-gray-500 mb-3">Format: address,amount (one per line)</p>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 mb-2">
                                 <button onClick={downloadCSVTpl} className="px-3 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors">Download Template</button>
-                                {specificAmounts.length > 0 && <span className="text-xs text-emerald-400">Loaded {specificAmounts.length} specific amounts</span>}
+                                {specificAmounts.length > 0 ? <span className="text-xs text-emerald-400">Loaded {specificAmounts.length} specific amounts</span> : <span className="text-xs text-gray-500">No file loaded</span>}
+                                <button onClick={() => setShowCSVEditor(prev => !prev)} className="ml-auto text-xs text-gray-400 underline">{showCSVEditor ? 'Hide Editor' : 'Edit CSV'}</button>
                             </div>
+
+                            {/* Paginated Mapping View */}
+                            {specificAmounts.length > 0 ? (
+                                (() => {
+                                    const total = specificAmounts.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+                                    const totalAddresses = specificAmounts.length;
+                                    const lastPage = Math.max(1, Math.ceil(totalAddresses / SPECIFIC_PAGE_SIZE));
+                                    const start = (specificPage - 1) * SPECIFIC_PAGE_SIZE;
+                                    const pageItems = specificAmounts.slice(start, start + SPECIFIC_PAGE_SIZE);
+                                    return (
+                                        <div>
+                                            <div className="mb-2 text-xs text-gray-300">Showing {(start + 1)} - {(start + pageItems.length)} of {totalAddresses} addresses</div>
+                                            <div className="w-full bg-[#0b1520] rounded border border-gray-700 p-2 text-xs">
+                                                <div className="flex font-medium pb-2 border-b border-gray-800 mb-2">
+                                                    <div className="flex-1">Address</div>
+                                                    <div className="w-28 text-right">Amount</div>
+                                                    <div className="w-16 pl-2">Action</div>
+                                                </div>
+                                                {pageItems.map((item, idx) => (
+                                                    <div key={start + idx} className="flex items-center gap-2 py-1 border-b border-gray-800">
+                                                        <div className="flex-1 text-xs text-gray-200 truncate" title={item.address}>{item.address}</div>
+                                                        <input value={item.amount} onChange={(e) => updateSpecificAmount(start + idx, e.target.value)} className="w-28 text-sm rounded p-1 bg-[#0f1a27] border border-gray-700 text-white text-right" />
+                                                        <div className="w-16 pl-2">
+                                                            <button onClick={() => removeSpecific(start + idx)} className="text-xs text-red-400">Remove</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div className="flex items-center justify-between mt-3">
+                                                <div className="text-xs text-gray-300">Total: <span className="text-emerald-400">{totalAddresses}</span> addresses | <span className="text-emerald-400">{total.toLocaleString(undefined, {maximumFractionDigits: 6})} {token.name}</span></div>
+                                                <div className="flex items-center gap-2">
+                                                    <button disabled={specificPage === 1} onClick={() => setSpecificPage(p => Math.max(1, p - 1))} className="px-2 py-1 text-xs bg-gray-700 text-white rounded disabled:opacity-50">Prev</button>
+                                                    <div className="text-xs text-gray-300">Page {specificPage} / {lastPage}</div>
+                                                    <button disabled={specificPage === lastPage} onClick={() => setSpecificPage(p => Math.min(lastPage, p + 1))} className="px-2 py-1 text-xs bg-gray-700 text-white rounded disabled:opacity-50">Next</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            ) : (
+                                <div className="text-xs text-gray-500">No specific amounts loaded — upload a CSV or use the editor.</div>
+                            )}
+
+                            {showCSVEditor && (
+                                <div className="flex flex-col gap-2 mt-3">
+                                    <textarea value={specificText} onChange={(e) => setSpecificText(e.target.value)} className="w-full h-28 p-2 bg-[#0f1a27] rounded border border-gray-700 text-sm" />
+                                    <div className="flex gap-2">
+                                        <button onClick={loadSpecificFromText} className="px-3 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors">Load</button>
+                                        <button onClick={() => { setSpecificText(''); setSpecificAmounts([]); setMultiInput(''); setSpecificPage(1); }} className="px-3 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors">Clear</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ) : (
