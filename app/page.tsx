@@ -40,6 +40,13 @@ export default function Page() {
                             <span className="text-white glitch-heading">Trade Anything, Earn Anywhere</span>
                             <span className="text-[#00FF41]">Across the Crypto Multiverse</span>
                         </h1>
+                        <a href="/announcement" className="group inline-flex items-center gap-3 w-full max-w-md mx-auto px-4 py-2.5 rounded-full border border-[#00FF41]/30 bg-[#00FF41]/5 hover:bg-[#00FF41]/10 hover:border-[#00FF41]/60 transition-all">
+                            <span className="shrink-0 w-2 h-2 rounded-full bg-[#00FF41] shadow-[0_0_6px_#00FF41] animate-pulse" />
+                            <span className="flex-1 text-left font-mono text-xs text-white/80 truncate">
+                                CMswap is rebranding to <span className="text-[#00FF41] font-semibold">Junoswap</span> — a new chapter begins
+                            </span>
+                            <span className="shrink-0 font-mono text-xs text-[#00FF41]/70 group-hover:text-[#00FF41] transition-colors whitespace-nowrap">Read more →</span>
+                        </a>
                         <div className="mt-8 mb-12"><HeroSwapCard /></div>
                         <div className="mx-auto max-w-4xl mx-auto">
                             <div className="bg-water-200 rounded-lg overflow-hidden border border-[#00FF41]/20 relative">
