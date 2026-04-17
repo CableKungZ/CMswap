@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { X, ExternalLink } from 'lucide-react'
 
-const STORAGE_KEY = 'junoswap_rebrand_announcement_dismissed'
+const STORAGE_KEY = 'junoswap_rebrand_announcement_dismissed_v2'
 
 export default function AnnouncementPopup() {
     const [visible, setVisible] = React.useState(false)
@@ -79,7 +79,6 @@ export default function AnnouncementPopup() {
                             <span className="text-[#FF3131] font-semibold">Junoswap</span> — a new name marking a new chapter.
                         </p>
                         <ul className="space-y-1.5 text-white/60 text-xs">
-                            <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>Same team, same contracts, funds stay safe</li>
                             <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>Enhanced UX/UI &amp; new DeFi features</li>
                             <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>CMswap accessible until 30 Sep 2026</li>
                         </ul>
