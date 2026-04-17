@@ -207,11 +207,19 @@ export default function AnnouncementPage() {
 
                     {/* Headline */}
                     <div className="text-center mb-10 space-y-3">
-                        <h2 className="text-lg md:text-xl lg:text-2xl font-bold font-mono text-white leading-tight tracking-tight">
+                        <h2 className="text-[1.3125rem] md:text-[1.575rem] lg:text-[2.1rem] font-bold font-mono text-white leading-tight tracking-tight">
                             CMswap Rebranding Announcement
                         </h2>
                         <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold font-mono text-[#FF3131] leading-tight">
-                            Welcome to Junoswap
+                            <a
+                                href="https://junoswap.trade/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group inline-flex items-center gap-2 hover:text-[#ff5555] transition-colors"
+                            >
+                                Welcome to Junoswap
+                                <ExternalLink className="w-5 h-5 md:w-6 md:h-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                            </a>
                         </h1>
                         <p className="text-white/60 font-mono text-sm max-w-lg mx-auto leading-relaxed pt-2">
                             We&apos;re excited to officially announce that CMswap is rebranding to Junoswap — marking the beginning of a new chapter in our journey.
