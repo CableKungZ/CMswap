@@ -32,7 +32,6 @@ const sections = [
                     We want to reassure our community that the foundation you trust stays unchanged:
                 </p>
                 <ul className="space-y-2 text-white/70 font-mono text-sm">
-                    <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>The same core development team</li>
                     <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>Smart contracts remain the same</li>
                     <li className="flex items-start gap-2"><span className="text-[#FF3131] mt-0.5">▸</span>All user funds remain safe and secure</li>
                 </ul>
@@ -208,12 +207,12 @@ export default function AnnouncementPage() {
 
                     {/* Headline */}
                     <div className="text-center mb-10 space-y-3">
-                        <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold font-mono text-white leading-tight tracking-tight">
-                            CMswap Rebranding Announcement:
-                        </h1>
-                        <h2 className="text-xl md:text-2xl lg:text-3xl font-bold font-mono text-[#FF3131] leading-tight">
-                            Welcome to Junoswap
+                        <h2 className="text-lg md:text-xl lg:text-2xl font-bold font-mono text-white leading-tight tracking-tight">
+                            CMswap Rebranding Announcement
                         </h2>
+                        <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold font-mono text-[#FF3131] leading-tight">
+                            Welcome to Junoswap
+                        </h1>
                         <p className="text-white/60 font-mono text-sm max-w-lg mx-auto leading-relaxed pt-2">
                             We&apos;re excited to officially announce that CMswap is rebranding to Junoswap — marking the beginning of a new chapter in our journey.
                         </p>
